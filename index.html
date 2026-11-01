@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFC-инвентаризация (тест)</title>
+<style>
+    :root {
+        --bg: #0f172a; --card: #1e293b; --accent: #38bdf8; --accent-active: #ef4444;
+        --text: #e2e8f0; --muted: #94a3b8; --success: #22c55e; --warning: #f59e0b;
+        --border: #334155;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, Roboto, Arial, sans-serif;
+        background: var(--bg); color: var(--text); padding: 16px; padding-bottom: 100px; }
+    h1 { font-size: 18px; text-align: center; margin: 8px 0 20px; color: var(--muted); }
+    h2 { font-size: 14px; color: var(--muted); margin: 0 0 10px; font-weight: 500; }
+
+    .card { background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+
+    /* Блок выбора участка */
+    .location-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    select { width: 100%; padding: 12px; font-size: 15px; border-radius: 10px;
+        border: 1px solid var(--border); background: #0f172a; color: var(--text); }
+    select:disabled { opacity: 0.5; }
+    label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+
+    .location-banner { margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+        background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35);
+        font-size: 14px; text-align: center; }
+    .location-banner.incomplete { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.4); color: var(--warning); }
+    .location-banner b { color: var(--accent); }
+
+    .counter-card { text-align: center; }
+    .counter-label { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+    .counter-value { font-size: 64px; font-weight: 700; color: var(--accent); line-height: 1; }
+
+    .scan-btn { display: block; width: 100%; padding: 18px; font-size: 18px; font-weight: 600;
+        border: none; border-radius: 14px; background: var(--accent); color: #0f172a;
+        margin-bottom: 16px; cursor: pointer; }
+    .scan-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+    .scan-btn.active { background: var(--accent-active); color: white; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+    .tail-list { list-style: none; margin: 0; padding: 0; }
+    .tail-list li { font-family: Consolas, monospace; font-size: 15px; padding: 8px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.08); display: flex;
+        justify-content: space-between; gap: 8px; }
+    .tail-list li:last-child { border-bottom: none; }
+    .tail-list .time { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+    .tail-empty { color: var(--muted); font-size: 14px; text-align: center; padding: 12px 0; }
+
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .export-btn { padding: 16px; font-size: 15px; font-weight: 600;
+        border: 2px solid var(--success); border-radius: 14px; background: transparent;
+        color: var(--success); cursor: pointer; }
+    .export-btn:disabled { border-color: var(--muted); color: var(--muted); cursor: not-allowed; }
+    .clear-btn { padding: 16px; font-size: 15px; font-weight: 600;
+        border: 2px solid var(--accent-active); border-radius: 14px; background: transparent;
+        color: var(--accent-active); cursor: pointer; }
+    .clear-btn:disabled { border-color: var(--muted); color: var(--muted); cursor: not-allowed; }
+
+    .toast-container { position: fixed; bottom: 16px; left: 16px; right: 16px;
+        display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none; }
+    .toast { padding: 12px 16px; border-radius: 10px; font-size: 14px; color: white;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3); animation: toast-in 0.2s ease-out; }
+    .toast.success { background: var(--success); }
+    .toast.warning { background: var(--warning); color: #1a1a1a; }
+    .toast.error { background: var(--accent-active); }
+    .toast.info { background: var(--accent); color: #0f172a; }
+    @keyframes toast-in { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+</style>
+</head>
+<body>
+
+    <h1>NFC-инвентаризация · тестовый стенд</h1>
+
+    <div class="card">
+        <h2>Участок инвентаризации</h2>
+        <div class="location-grid">
+            <div>
+                <label for="fond-select">Сигла фонда</label>
+                <select id="fond-select"><option value="">— загрузка —</option></select>
+            </div>
+            <div>
+                <label for="shelf-select">Сигла стеллажа</label>
+                <select id="shelf-select" disabled><option value="">— сначала фонд —</option></select>
+            </div>
+        </div>
+        <div class="location-banner incomplete" id="location-banner">Выберите фонд и стеллаж</div>
+    </div>
+
+    <div class="card counter-card">
+        <div class="counter-label">Считано меток</div>
+        <div class="counter-value" id="counter">0</div>
+    </div>
+
+    <button class="scan-btn" id="scan-btn" type="button" disabled>Начать сканирование</button>
+
+    <div class="card">
+        <h2>Последние считанные (до 10)</h2>
+        <ul class="tail-list" id="tail-list">
+            <li class="tail-empty">Пока ничего не считано</li>
+        </ul>
+    </div>
+
+    <div class="btn-row">
+        <button class="export-btn" id="export-btn" type="button" disabled>Выгрузить (0)</button>
+        <button class="clear-btn" id="clear-btn" type="button" disabled>Очистить список</button>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const TAIL_SIZE = 10;
+        const LS_KEY_FOND = 'nfc_inv_last_fond';
+        const LS_KEY_SHELF = 'nfc_inv_last_shelf';
+
+        /** @type {{abortController: AbortController, reader: NDEFReader} | null} */
+        let session = null;
+        /** @type {{uid: string, time: string}[]} */
+        let scannedTags = [];
+        /** @type {Set<string>} */
+        const scannedSet = new Set();
+        /** @type {{fonds: {code:string,name:string}[], shelvesByFond: Record<string,string[]>}} */
+        let dictionaries = { fonds: [], shelvesByFond: {} };
+
+        const scanBtn = document.getElementById('scan-btn');
+        const counterEl = document.getElementById('counter');
+        const tailListEl = document.getElementById('tail-list');
+        const exportBtn = document.getElementById('export-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const toastContainer = document.getElementById('toast-container');
+        const fondSelect = document.getElementById('fond-select');
+        const shelfSelect = document.getElementById('shelf-select');
+        const locationBanner = document.getElementById('location-banner');
+
+        function showToast(message, type = 'info', duration = 2500) {
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+            setTimeout(() => toast.remove(), duration);
+        }
+
+        // ---------- Загрузка словарей (фонд/стеллаж) ----------
+
+        async function loadDictionaries() {
+            try {
+                const response = await fetch('dictionaries.json');
+                dictionaries = await response.json();
+            } catch (error) {
+                showToast('Не удалось загрузить словари фондов/стеллажей', 'error', 4000);
+                dictionaries = { fonds: [], shelvesByFond: {} };
+            }
+            populateFondSelect();
+        }
+
+        function populateFondSelect() {
+            fondSelect.innerHTML = '<option value="">— выберите фонд —</option>' +
+                dictionaries.fonds.map(f =>
+                    `<option value="${f.code}">${f.code} — ${f.name}</option>`
+                ).join('');
+
+            const savedFond = localStorage.getItem(LS_KEY_FOND);
+            if (savedFond && dictionaries.fonds.some(f => f.code === savedFond)) {
+                fondSelect.value = savedFond;
+                populateShelfSelect(savedFond, localStorage.getItem(LS_KEY_SHELF));
+            }
+            updateLocationState();
+        }
+
+        function populateShelfSelect(fondCode, preselectShelf) {
+            const shelves = dictionaries.shelvesByFond[fondCode] || [];
+            if (shelves.length === 0) {
+                shelfSelect.innerHTML = '<option value="">— нет данных —</option>';
+                shelfSelect.disabled = true;
+                return;
+            }
+            shelfSelect.innerHTML = '<option value="">— выберите стеллаж —</option>' +
+                shelves.map(s => `<option value="${s}">${s}</option>`).join('');
+            shelfSelect.disabled = false;
+
+            if (preselectShelf && shelves.includes(preselectShelf)) {
+                shelfSelect.value = preselectShelf;
+            }
+        }
+
+        function getCurrentLocation() {
+            const fondCode = fondSelect.value;
+            const shelfCode = shelfSelect.value;
+            if (!fondCode || !shelfCode) return null;
+            const fond = dictionaries.fonds.find(f => f.code === fondCode);
+            return { fondCode, shelfCode, fondName: fond ? fond.name : fondCode };
+        }
+
+        function updateLocationState() {
+            const loc = getCurrentLocation();
+            const isScanning = session !== null;
+
+            fondSelect.disabled = isScanning;
+            shelfSelect.disabled = isScanning || !fondSelect.value;
+
+            if (loc) {
+                locationBanner.classList.remove('incomplete');
+                locationBanner.innerHTML = `Участок: <b>${loc.fondCode}</b> / стеллаж <b>${loc.shelfCode}</b>`;
+            } else {
+                locationBanner.classList.add('incomplete');
+                locationBanner.textContent = 'Выберите фонд и стеллаж';
+            }
+
+            scanBtn.disabled = !loc || isScanning === false && false; // базовая блокировка ниже
+            scanBtn.disabled = !loc;
+            if (isScanning) scanBtn.disabled = false; // кнопку остановки не блокируем
+        }
+
+        /**
+         * Запрашивает подтверждение смены участка, если список не пуст,
+         * чтобы не перемешать метки с разных стеллажей в одном файле.
+         */
+        function confirmLocationChangeIfNeeded(revertFn) {
+            if (scannedTags.length === 0) return true;
+            const ok = confirm(
+                'Список содержит несохранённые метки текущего участка.\n' +
+                'Смена фонда/стеллажа очистит список.\n\nПродолжить?'
+            );
+            if (!ok) {
+                revertFn();
+                return false;
+            }
+            clearTags(false);
+            return true;
+        }
+
+        fondSelect.addEventListener('change', () => {
+            const newFond = fondSelect.value;
+            const prevFond = localStorage.getItem(LS_KEY_FOND) || '';
+
+            const proceed = confirmLocationChangeIfNeeded(() => { fondSelect.value = prevFond; });
+            if (!proceed) return;
+
+            localStorage.setItem(LS_KEY_FOND, newFond);
+            localStorage.removeItem(LS_KEY_SHELF);
+            populateShelfSelect(newFond, null);
+            updateLocationState();
+        });
+
+        shelfSelect.addEventListener('change', () => {
+            const newShelf = shelfSelect.value;
+            const prevShelf = localStorage.getItem(LS_KEY_SHELF) || '';
+
+            const proceed = confirmLocationChangeIfNeeded(() => { shelfSelect.value = prevShelf; });
+            if (!proceed) return;
+
+            localStorage.setItem(LS_KEY_SHELF, newShelf);
+            updateLocationState();
+        });
+
+        // ---------- UID: определение направления байт ----------
+
+        // ISO 15693 передаёт байты UID «задом наперёд» (LSB-first) по воздуху,
+        // а Android/Chrome отдают event.serialNumber как пришло, без разворота.
+        // Конвенциональная запись UID начинается с E0 (ISO/IEC 7816-6).
+        function normalizeUid(serialNumber) {
+            const bytes = serialNumber.split(':').map(b => b.toUpperCase());
+            if (bytes.length === 0) return serialNumber.toUpperCase();
+
+            if (bytes[0] === 'E0') return bytes.join('');
+            if (bytes[bytes.length - 1] === 'E0') return bytes.slice().reverse().join('');
+
+            console.warn('UID без префикса E0, порядок байт не изменён:', serialNumber);
+            return bytes.join('');
+        }
+
+        // ---------- Список считанных меток ----------
+
+        function updateCounter() {
+            counterEl.textContent = String(scannedTags.length);
+            exportBtn.disabled = scannedTags.length === 0;
+            exportBtn.textContent = `Выгрузить (${scannedTags.length})`;
+            clearBtn.disabled = scannedTags.length === 0;
+        }
+
+        function renderTail() {
+            if (scannedTags.length === 0) {
+                tailListEl.innerHTML = '<li class="tail-empty">Пока ничего не считано</li>';
+                return;
+            }
+            const last = scannedTags.slice(-TAIL_SIZE).reverse();
+            tailListEl.innerHTML = last.map(tag => `
+                <li><span>${tag.uid}</span><span class="time">${tag.time}</span></li>
+            `).join('');
+        }
+
+        function addTag(rawSerialNumber) {
+            const uid = normalizeUid(rawSerialNumber);
+
+            if (scannedSet.has(uid)) {
+                showToast(`Метка уже считана: ${uid}`, 'warning');
+                if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 80]);
+                return;
+            }
+
+            const time = new Date().toLocaleTimeString('ru-RU',
+                { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            scannedTags.push({ uid, time });
+            scannedSet.add(uid);
+
+            updateCounter();
+            renderTail();
+            showToast(`Считано: ${uid}`, 'success', 1500);
+            if (navigator.vibrate) navigator.vibrate(100);
+        }
+
+        function clearTags(ask = true) {
+            if (ask && scannedTags.length > 0) {
+                if (!confirm(`Очистить список (${scannedTags.length} меток)? Данные будут потеряны.`)) return;
+            }
+            scannedTags = [];
+            scannedSet.clear();
+            updateCounter();
+            renderTail();
+        }
+
+        clearBtn.addEventListener('click', () => clearTags(true));
+
+        // ---------- NFC-сканирование ----------
+
+        async function startScan() {
+            const loc = getCurrentLocation();
+            if (!loc) {
+                showToast('Сначала выберите фонд и стеллаж', 'error');
+                return;
+            }
+            if (!window.isSecureContext) {
+                showToast('Страница должна быть открыта по HTTPS', 'error');
+                return;
+            }
+            if (!('NDEFReader' in window)) {
+                showToast('Web NFC не поддерживается этим браузером', 'error');
+                return;
+            }
+
+            try {
+                const abortController = new AbortController();
+                const reader = new NDEFReader();
+                await reader.scan({ signal: abortController.signal });
+
+                session = { abortController, reader };
+                setActiveUi(true);
+                showToast(`Сканирование: ${loc.fondCode} / ${loc.shelfCode}`, 'info');
+
+                reader.addEventListener('reading', (event) => addTag(event.serialNumber),
+                    { signal: abortController.signal });
+                reader.addEventListener('readingerror', () => showToast('Ошибка чтения метки', 'error'),
+                    { signal: abortController.signal });
+
+            } catch (error) {
+                const messages = {
+                    NotAllowedError: 'Доступ к NFC не разрешён.',
+                    NotSupportedError: 'NFC-модуль не найден на этом устройстве.',
+                    SecurityError: 'Требуется HTTPS-соединение.',
+                    NotReadableError: 'NFC-модуль занят другим приложением.'
+                };
+                showToast(messages[error.name] || ('Ошибка: ' + error.message), 'error');
+                stopScan();
+            }
+        }
+
+        function stopScan() {
+            if (session) {
+                session.abortController.abort();
+                session = null;
+            }
+            setActiveUi(false);
+        }
+
+        function setActiveUi(active) {
+            scanBtn.classList.toggle('active', active);
+            scanBtn.textContent = active ? 'Остановить сканирование' : 'Начать сканирование';
+            updateLocationState();
+        }
+
+        scanBtn.addEventListener('click', () => {
+            session ? stopScan() : startScan();
+        });
+
+        // ---------- Выгрузка файла ----------
+
+        function sanitizeForFilename(str) {
+            return String(str)
+                .trim()
+                .replace(/[\\/:*?"<>|]/g, '_') // запрещённые в именах файлов символы
+                .replace(/\s+/g, '_');
+        }
+
+        function exportList() {
+            if (scannedTags.length === 0) return;
+            const loc = getCurrentLocation();
+
+            const lines = scannedTags.map(tag => tag.uid).join('\n');
+            const blob = new Blob([lines + '\n'], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const dateStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+
+            const locPart = loc
+                ? `${sanitizeForFilename(loc.fondCode)}_${sanitizeForFilename(loc.shelfCode)}_`
+                : '';
+            const filename = `nfc_${locPart}${dateStr}.txt`;
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+            showToast(`Файл сохранён: ${filename}`, 'success', 3500);
+        }
+
+        exportBtn.addEventListener('click', exportList);
+
+        // ---------- Инициализация ----------
+
+        updateCounter();
+        renderTail();
+        loadDictionaries();
+    })();
+    </script>
+</body>
+</html>
